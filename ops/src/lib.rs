@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use common::prover_state::p_state;
+use evm_arithmetization::GenerationInputs;
 use keccak_hash::keccak;
 use paladin::{
     operation::{FatalError, FatalStrategy, Monoid, Operation, Result},
@@ -11,7 +12,6 @@ use proof_gen::{
     proof_types::{AggregatableProof, GeneratedAggProof, GeneratedBlockProof},
 };
 use serde::{Deserialize, Serialize};
-use trace_decoder::types::TxnProofGenIR;
 use tracing::{event, info_span, Level};
 
 registry!();
@@ -39,7 +39,7 @@ where
 
 #[cfg(not(feature = "test_only"))]
 impl Operation for TxProof {
-    type Input = TxnProofGenIR;
+    type Input = GenerationInputs;
     type Output = proof_gen::proof_types::AggregatableProof;
 
     fn execute(&self, input: Self::Input) -> Result<Self::Output> {
@@ -60,7 +60,7 @@ impl Operation for TxProof {
 
 #[cfg(feature = "test_only")]
 impl Operation for TxProof {
-    type Input = TxnProofGenIR;
+    type Input = GenerationInputs;
     type Output = ();
 
     fn execute(&self, input: Self::Input) -> Result<Self::Output> {
@@ -81,7 +81,7 @@ impl Operation for TxProof {
 }
 
 impl TxProof {
-    fn txn_ident(ir: &TxnProofGenIR) -> String {
+    fn txn_ident(ir: &GenerationInputs) -> String {
         let txn_hash_str = ir
             .signed_txn
             .as_ref()
