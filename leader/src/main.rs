@@ -15,9 +15,9 @@ use crate::jerigon::{jerigon_main, ProofParams};
 use crate::utils::get_package_version;
 
 mod cli;
+mod client;
 mod http;
 mod init;
-mod jerigon;
 mod stdio;
 mod utils;
 
@@ -101,6 +101,34 @@ async fn main() -> Result<()> {
             save_inputs_on_error,
             block_time,
             keep_intermediate_proofs,
+            backoff,
+            max_retries,
+        } => {
+            let previous_proof = get_previous_proof(previous_proof)?;
+
+            client::rpc_main(
+                "jerigon",
+                rpc_url,
+                runtime,
+                block_number,
+                checkpoint_block_number,
+                previous_proof,
+                proof_output_path,
+                save_inputs_on_error,
+                backoff,
+                max_retries,
+            )
+            .await?;
+        }
+        Command::Native {
+            rpc_url,
+            block_number,
+            checkpoint_block_number,
+            previous_proof,
+            proof_output_path,
+            save_inputs_on_error,
+            backoff,
+            max_retries,
         } => {
             let previous_proof = get_previous_proof(previous_proof)?;
             let mut block_interval = BlockInterval::new(&block_interval)?;
@@ -116,7 +144,6 @@ async fn main() -> Result<()> {
             info!("Proving interval {block_interval}");
             jerigon_main(
                 runtime,
-                &rpc_url,
                 block_interval,
                 ProofParams {
                     checkpoint_block_number,
@@ -125,6 +152,8 @@ async fn main() -> Result<()> {
                     save_inputs_on_error,
                     keep_intermediate_proofs,
                 },
+                backoff,
+                max_retries,
             )
             .await?;
         }

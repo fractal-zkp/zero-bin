@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use alloy::transports::http::reqwest::Url;
 use clap::{Parser, Subcommand, ValueHint};
 use common::prover_state::cli::CliProverStateConfig;
 
@@ -33,7 +34,35 @@ pub(crate) enum Command {
     Jerigon {
         // The Jerigon RPC URL.
         #[arg(long, short = 'u', value_hint = ValueHint::Url)]
-        rpc_url: String,
+        rpc_url: Url,
+        /// The block number for which to generate a proof.
+        #[arg(short, long)]
+        block_number: u64,
+        /// The checkpoint block number.
+        #[arg(short, long, default_value_t = 0)]
+        checkpoint_block_number: u64,
+        /// The previous proof output.
+        #[arg(long, short = 'f', value_hint = ValueHint::FilePath)]
+        previous_proof: Option<PathBuf>,
+        /// If provided, write the generated proof to this file instead of
+        /// stdout.
+        #[arg(long, short = 'o', value_hint = ValueHint::FilePath)]
+        proof_output_path: Option<PathBuf>,
+        /// If true, save the public inputs to disk on error.
+        #[arg(short, long, default_value_t = false)]
+        save_inputs_on_error: bool,
+        /// Backoff in milliseconds for request retries
+        #[arg(long, default_value_t = 0)]
+        backoff: u64,
+        /// The maximum number of retries
+        #[arg(long, default_value_t = 0)]
+        max_retries: u32,
+    },
+    /// Reads input from a native node and writes output to stdout.
+    Native {
+        // The native RPC URL.
+        #[arg(long, short = 'u', value_hint = ValueHint::Url)]
+        rpc_url: Url,
         /// The block interval for which to generate a proof.
         #[arg(long, short = 'i')]
         block_interval: String,
@@ -63,6 +92,12 @@ pub(crate) enum Command {
             default_value_t = false
         )]
         keep_intermediate_proofs: bool,
+        /// Backoff in milliseconds for request retries
+        #[arg(long, default_value_t = 0)]
+        backoff: u64,
+        /// The maximum number of retries
+        #[arg(long, default_value_t = 0)]
+        max_retries: u32,
     },
     /// Reads input from HTTP and writes output to a directory.
     Http {
