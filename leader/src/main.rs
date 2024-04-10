@@ -8,11 +8,12 @@ use dotenvy::dotenv;
 use ops::register;
 use paladin::runtime::Runtime;
 use proof_gen::types::PlonkyProofIntern;
+use rpc::{JerigonRpcClient, NativeRpcClient};
 
 mod cli;
+mod client;
 mod http;
 mod init;
-mod jerigon;
 mod stdio;
 
 fn get_previous_proof(path: Option<PathBuf>) -> Result<Option<PlonkyProofIntern>> {
@@ -71,10 +72,32 @@ async fn main() -> Result<()> {
             proof_output_path,
         } => {
             let previous_proof = get_previous_proof(previous_proof)?;
+            let client = JerigonRpcClient::new(rpc_url);
 
-            jerigon::jerigon_main(
+            client::rpc_main(
+                client,
                 runtime,
-                &rpc_url,
+                block_number,
+                checkpoint_block_number,
+                previous_proof,
+                proof_output_path,
+            )
+            .await?;
+        }
+        Command::Native {
+            rpc_url,
+            block_number,
+            checkpoint_block_number,
+            previous_proof,
+            proof_output_path,
+        } => {
+            let previous_proof = get_previous_proof(previous_proof)?;
+            let client =
+                NativeRpcClient::new(rpc_url).expect("should be able to create native rpc client");
+
+            client::rpc_main(
+                client,
+                runtime,
                 block_number,
                 checkpoint_block_number,
                 previous_proof,

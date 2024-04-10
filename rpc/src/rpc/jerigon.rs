@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use ethereum_types::{Address, Bloom, H256, U256};
 use evm_arithmetization::proof::{BlockHashes, BlockMetadata};
 use futures::{stream::FuturesOrdered, TryStreamExt};
-use prover::ProverInput;
+use reqwest::Client;
 use reqwest::IntoUrl;
 use serde::Deserialize;
 use thiserror::Error;
@@ -13,22 +14,66 @@ use trace_decoder::{
 };
 use tracing::{debug, info};
 
+use super::{ProverInput, RpcClient};
+
+pub struct JerigonRpcClient {
+    client: Client,
+    rpc_url: String,
+}
+
+impl JerigonRpcClient {
+    pub fn new(rpc_url: String) -> Self {
+        Self {
+            client: Client::new(),
+            rpc_url,
+        }
+    }
+}
+
+#[async_trait]
+impl RpcClient for JerigonRpcClient {
+    async fn fetch_prover_input(
+        &self,
+        block_number: u64,
+        checkpoint_block_number: u64,
+    ) -> Result<ProverInput> {
+        let (trace_result, rpc_block_metadata) = try_join!(
+            JerigonTraceResponse::fetch(&self.client, &self.rpc_url, block_number),
+            RpcBlockMetadata::fetch(
+                &self.client,
+                &self.rpc_url,
+                block_number,
+                checkpoint_block_number
+            ),
+        )?;
+
+        debug!("Got block result: {:?}", rpc_block_metadata.block_by_number);
+        debug!("Got trace result: {:?}", trace_result);
+        debug!("Got chain_id: {:?}", rpc_block_metadata.chain_id);
+
+        Ok(ProverInput {
+            block_trace: trace_result.try_into()?,
+            other_data: rpc_block_metadata.into(),
+        })
+    }
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
-enum JerigonResultItem {
+pub(crate) enum JerigonResultItem {
     Result(TxnInfo),
     BlockWitness(BlockTraceTriePreImages),
 }
 
 /// The response from the `debug_traceBlockByNumber` RPC method.
 #[derive(Deserialize, Debug)]
-struct JerigonTraceResponse {
-    result: Vec<JerigonResultItem>,
+pub(crate) struct JerigonTraceResponse {
+    pub(crate) result: Vec<JerigonResultItem>,
 }
 
 #[derive(Error, Debug)]
-enum JerigonTraceError {
+pub(crate) enum JerigonTraceError {
     #[error("expected BlockTraceTriePreImages in block_witness key")]
     BlockTraceTriePreImagesNotFound,
 }
@@ -63,8 +108,11 @@ impl TryFrom<JerigonTraceResponse> for BlockTrace {
 
 impl JerigonTraceResponse {
     /// Fetches the block trace for the given block number.
-    async fn fetch<U: IntoUrl>(rpc_url: U, block_number: u64) -> Result<Self> {
-        let client = reqwest::Client::new();
+    pub(crate) async fn fetch<U: IntoUrl>(
+        client: &reqwest::Client,
+        rpc_url: U,
+        block_number: u64,
+    ) -> Result<Self> {
         let block_number_hex = format!("0x{:x}", block_number);
         info!("Fetching block trace for block {}", block_number_hex);
 
@@ -91,27 +139,27 @@ impl JerigonTraceResponse {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct EthGetBlockByNumberResult {
-    base_fee_per_gas: U256,
-    difficulty: U256,
-    gas_limit: U256,
-    gas_used: U256,
-    hash: H256,
-    logs_bloom: Bloom,
-    miner: Address,
-    mix_hash: H256,
-    number: U256,
-    parent_hash: H256,
-    state_root: H256,
-    timestamp: U256,
-    withdrawals: Vec<Withdrawal>,
+pub(crate) struct EthGetBlockByNumberResult {
+    pub(crate) base_fee_per_gas: U256,
+    pub(crate) difficulty: U256,
+    pub(crate) gas_limit: U256,
+    pub(crate) gas_used: U256,
+    pub(crate) hash: H256,
+    pub(crate) logs_bloom: Bloom,
+    pub(crate) miner: Address,
+    pub(crate) mix_hash: H256,
+    pub(crate) number: U256,
+    pub(crate) parent_hash: H256,
+    pub(crate) state_root: H256,
+    pub(crate) timestamp: U256,
+    pub(crate) withdrawals: Vec<Withdrawal>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct Withdrawal {
-    address: Address,
-    amount: U256,
+pub(crate) struct Withdrawal {
+    pub(crate) address: Address,
+    pub(crate) amount: U256,
 }
 
 impl From<Withdrawal> for (Address, U256) {
@@ -122,14 +170,17 @@ impl From<Withdrawal> for (Address, U256) {
 
 /// The response from the `eth_getBlockByNumber` RPC method.
 #[derive(Deserialize, Debug)]
-struct EthGetBlockByNumberResponse {
-    result: EthGetBlockByNumberResult,
+pub(crate) struct EthGetBlockByNumberResponse {
+    pub(crate) result: EthGetBlockByNumberResult,
 }
 
 impl EthGetBlockByNumberResponse {
     /// Fetches the block metadata for the given block number.
-    async fn fetch<U: IntoUrl>(rpc_url: U, block_number: u64) -> Result<Self> {
-        let client = reqwest::Client::new();
+    pub(crate) async fn fetch<U: IntoUrl>(
+        client: &Client,
+        rpc_url: U,
+        block_number: u64,
+    ) -> Result<Self> {
         let block_number_hex = format!("0x{:x}", block_number);
         info!("Fetching block metadata for block {}", block_number_hex);
 
@@ -153,7 +204,8 @@ impl EthGetBlockByNumberResponse {
         Ok(parsed)
     }
 
-    async fn fetch_previous_block_hashes<U: IntoUrl + Copy>(
+    pub(crate) async fn fetch_previous_block_hashes<U: IntoUrl + Copy>(
+        client: &Client,
         rpc_url: U,
         block_number: u64,
     ) -> Result<Vec<H256>> {
@@ -176,7 +228,7 @@ impl EthGetBlockByNumberResponse {
         let start = block_number.saturating_sub(256);
         let mut futs: FuturesOrdered<_> = (start..=block_number)
             .step_by(2)
-            .map(|block_number| Self::fetch(rpc_url, block_number))
+            .map(|block_number| Self::fetch(client, rpc_url, block_number))
             .collect();
 
         while let Some(response) = futs.try_next().await? {
@@ -197,25 +249,25 @@ impl EthGetBlockByNumberResponse {
         Ok(hashes)
     }
 
-    async fn fetch_checkpoint_state_trie_root<U: IntoUrl + Copy>(
+    pub(crate) async fn fetch_checkpoint_state_trie_root<U: IntoUrl + Copy>(
+        client: &Client,
         rpc_url: U,
         block_number: u64,
     ) -> Result<H256> {
-        let res = Self::fetch(rpc_url, block_number).await?;
+        let res = Self::fetch(client, rpc_url, block_number).await?;
         Ok(res.result.state_root)
     }
 }
 
 /// The response from the `eth_chainId` RPC method.
 #[derive(Deserialize, Debug)]
-struct EthChainIdResponse {
-    result: U256,
+pub(crate) struct EthChainIdResponse {
+    pub(crate) result: U256,
 }
 
 impl EthChainIdResponse {
     /// Fetches the chain id.
-    async fn fetch<U: IntoUrl>(rpc_url: U) -> Result<Self> {
-        let client = reqwest::Client::new();
+    pub(crate) async fn fetch<U: IntoUrl>(client: &Client, rpc_url: U) -> Result<Self> {
         info!("Fetching chain id");
 
         let response = client
@@ -241,20 +293,26 @@ impl EthChainIdResponse {
 /// Product of the `eth_getBlockByNumber` and `eth_chainId` RPC methods.
 ///
 /// Contains the necessary data to construct the `OtherBlockData` struct.
-struct RpcBlockMetadata {
-    block_by_number: EthGetBlockByNumberResponse,
-    chain_id: EthChainIdResponse,
-    prev_hashes: Vec<H256>,
-    checkpoint_state_trie_root: H256,
+pub(crate) struct RpcBlockMetadata {
+    pub(crate) block_by_number: EthGetBlockByNumberResponse,
+    pub(crate) chain_id: EthChainIdResponse,
+    pub(crate) prev_hashes: Vec<H256>,
+    pub(crate) checkpoint_state_trie_root: H256,
 }
 
 impl RpcBlockMetadata {
-    async fn fetch(rpc_url: &str, block_number: u64, checkpoint_block_number: u64) -> Result<Self> {
+    pub(crate) async fn fetch(
+        client: &Client,
+        rpc_url: &str,
+        block_number: u64,
+        checkpoint_block_number: u64,
+    ) -> Result<Self> {
         let (block_result, chain_id_result, prev_hashes, checkpoint_state_trie_root) = try_join!(
-            EthGetBlockByNumberResponse::fetch(rpc_url, block_number),
-            EthChainIdResponse::fetch(rpc_url),
-            EthGetBlockByNumberResponse::fetch_previous_block_hashes(rpc_url, block_number),
+            EthGetBlockByNumberResponse::fetch(client, rpc_url, block_number),
+            EthChainIdResponse::fetch(client, rpc_url),
+            EthGetBlockByNumberResponse::fetch_previous_block_hashes(client, rpc_url, block_number),
             EthGetBlockByNumberResponse::fetch_checkpoint_state_trie_root(
+                client,
                 rpc_url,
                 checkpoint_block_number
             )
@@ -321,32 +379,4 @@ impl From<RpcBlockMetadata> for OtherBlockData {
             checkpoint_state_trie_root,
         }
     }
-}
-
-pub struct FetchProverInputRequest<'a> {
-    pub rpc_url: &'a str,
-    pub block_number: u64,
-    pub checkpoint_block_number: u64,
-}
-
-pub async fn fetch_prover_input(
-    FetchProverInputRequest {
-        rpc_url,
-        block_number,
-        checkpoint_block_number,
-    }: FetchProverInputRequest<'_>,
-) -> Result<ProverInput> {
-    let (trace_result, rpc_block_metadata) = try_join!(
-        JerigonTraceResponse::fetch(rpc_url, block_number),
-        RpcBlockMetadata::fetch(rpc_url, block_number, checkpoint_block_number),
-    )?;
-
-    debug!("Got block result: {:?}", rpc_block_metadata.block_by_number);
-    debug!("Got trace result: {:?}", trace_result);
-    debug!("Got chain_id: {:?}", rpc_block_metadata.chain_id);
-
-    Ok(ProverInput {
-        block_trace: trace_result.try_into()?,
-        other_data: rpc_block_metadata.into(),
-    })
 }

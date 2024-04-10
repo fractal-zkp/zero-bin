@@ -7,22 +7,20 @@ use std::{
 use anyhow::Result;
 use paladin::runtime::Runtime;
 use proof_gen::types::PlonkyProofIntern;
+use rpc::RpcClient;
 
 /// The main function for the jerigon mode.
-pub(crate) async fn jerigon_main(
+pub(crate) async fn rpc_main<T: RpcClient>(
+    client: T,
     runtime: Runtime,
-    rpc_url: &str,
     block_number: u64,
     checkpoint_block_number: u64,
     previous: Option<PlonkyProofIntern>,
     proof_output_path_opt: Option<PathBuf>,
 ) -> Result<()> {
-    let prover_input = rpc::fetch_prover_input(rpc::FetchProverInputRequest {
-        rpc_url,
-        block_number,
-        checkpoint_block_number,
-    })
-    .await?;
+    let prover_input = client
+        .fetch_prover_input(block_number, checkpoint_block_number)
+        .await?;
 
     let proof = prover_input.prove(&runtime, previous).await;
     runtime.close().await?;

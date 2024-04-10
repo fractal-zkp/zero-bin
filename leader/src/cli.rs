@@ -45,6 +45,25 @@ pub(crate) enum Command {
         #[arg(long, short = 'o', value_hint = ValueHint::FilePath)]
         proof_output_path: Option<PathBuf>,
     },
+    /// Reads input from a native node and writes output to stdout.
+    Native {
+        // The native RPC URL.
+        #[arg(long, short = 'u', value_hint = ValueHint::Url)]
+        rpc_url: String,
+        /// The block number for which to generate a proof.
+        #[arg(short, long)]
+        block_number: u64,
+        /// The checkpoint block number.
+        #[arg(short, long, default_value_t = 0)]
+        checkpoint_block_number: u64,
+        /// The previous proof output.
+        #[arg(long, short = 'f', value_hint = ValueHint::FilePath)]
+        previous_proof: Option<PathBuf>,
+        /// If provided, write the generated proof to this file instead of
+        /// stdout.
+        #[arg(long, short = 'o', value_hint = ValueHint::FilePath)]
+        proof_output_path: Option<PathBuf>,
+    },
     /// Reads input from HTTP and writes output to a directory.
     Http {
         /// The port on which to listen.

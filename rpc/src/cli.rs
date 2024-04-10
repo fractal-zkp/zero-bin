@@ -13,6 +13,9 @@ pub(crate) enum Commands {
         /// The RPC URL
         #[arg(short = 'u', long, value_hint = ValueHint::Url)]
         rpc_url: String,
+        /// The RPC Tracer Type
+        #[arg(short = 't', long, default_value = "jerigon")]
+        rpc_type: String,
         /// The block number
         #[arg(short, long)]
         block_number: u64,
