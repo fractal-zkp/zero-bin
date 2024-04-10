@@ -8,19 +8,24 @@ use ethers::{
 };
 use mpt_trie::{
     nibbles::Nibbles,
-    partial_trie::{HashedPartialTrie, Node, PartialTrie, WrappedNode},
+    partial_trie::{Node, PartialTrie, WrappedNode},
 };
 
 /// A builder for constructing a partial trie from a collection of nodes.
-pub struct HashedPartialTrieBuilder {
+pub struct PartialTrieBuilder<T> {
     root: H256,
     nodes: HashMap<H256, Vec<u8>>,
+    _marker: std::marker::PhantomData<T>,
 }
 
-impl HashedPartialTrieBuilder {
-    /// Creates a new `HashedPartialTrieBuilder` with the given root and nodes.
+impl<T: PartialTrie> PartialTrieBuilder<T> {
+    /// Creates a new `PartialTrieBuilder` with the given root and nodes.
     pub fn new(root: H256, nodes: HashMap<H256, Vec<u8>>) -> Self {
-        HashedPartialTrieBuilder { root, nodes }
+        PartialTrieBuilder {
+            root,
+            nodes,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Inserts a proof into the builder.
@@ -34,7 +39,7 @@ impl HashedPartialTrieBuilder {
     }
 
     /// Builds the partial trie from the nodes and root.
-    pub fn build(self) -> HashedPartialTrie {
+    pub fn build(self) -> T {
         construct_partial_trie(self.root, &self.nodes)
     }
 }
