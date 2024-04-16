@@ -1,13 +1,12 @@
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use anyhow::{anyhow, Result};
 use ethers::providers::{Http, Middleware, Provider};
-use ethers::types::{AccountState, Block, H160, H256};
+use ethers::types::{Block, H160, H256};
 use ethers::utils::keccak256;
 use mpt_trie::partial_trie::HashedPartialTrie;
+use tokio::sync::Mutex;
 use trace_decoder::trace_protocol::{
     BlockTraceTriePreImages, SeparateStorageTriesPreImage, SeparateTriePreImage,
     SeparateTriePreImages, TrieDirect,
@@ -18,14 +17,13 @@ use super::trie::PartialTrieBuilder;
 
 /// Processes the state witness for the given block.
 pub(super) async fn process_state_witness(
-    provider: &Provider<Http>,
+    provider: Arc<Provider<Http>>,
     block: Block<H256>,
-    accounts_state: Arc<Mutex<BTreeMap<H160, AccountState>>>,
+    accounts_state: Arc<Mutex<HashMap<H160, HashSet<H256>>>>,
 ) -> Result<BlockTraceTriePreImages> {
     let accounts_state = Arc::try_unwrap(accounts_state)
         .map_err(|e| anyhow!("Failed to unwrap accounts state from arc: {e:?}"))?
-        .into_inner()
-        .map_err(|e| anyhow!("Failed to unwrap accounts state from mutex: {e:?}"))?;
+        .into_inner();
 
     let block_number = block
         .number
@@ -60,8 +58,8 @@ pub(super) async fn process_state_witness(
 /// Generates the state witness for the given block.
 async fn generate_state_witness(
     prev_state_root: H256,
-    accounts_state: BTreeMap<H160, AccountState>,
-    provider: &Provider<Http>,
+    accounts_state: HashMap<H160, HashSet<H256>>,
+    provider: Arc<Provider<Http>>,
     block_number: ethereum_types::U64,
     block: Block<H256>,
 ) -> Result<
@@ -76,20 +74,17 @@ async fn generate_state_witness(
         HashMap::<HashedStorageAddr, PartialTrieBuilder<HashedPartialTrie>>::new();
 
     // Process transaction state accesses
-    for (address, account) in accounts_state.iter() {
+    for (address, keys) in accounts_state.iter() {
         let proof = provider
             .get_proof(
                 *address,
-                account
-                    .storage
-                    .as_ref()
-                    .map_or(vec![], |x| x.keys().copied().collect()),
+                keys.iter().copied().collect(),
                 Some((block_number - 1).into()),
             )
             .await?;
         state.insert_proof(proof.account_proof);
 
-        if account.storage.is_some() {
+        if keys.len() > 0 {
             let mut storage_mpt = PartialTrieBuilder::new(proof.storage_hash, Default::default());
             for proof in proof.storage_proof {
                 storage_mpt.insert_proof(proof.proof);
@@ -115,6 +110,7 @@ async fn generate_state_witness(
     if let Some(withdrawals) = block.withdrawals.as_ref() {
         for withdrawal in withdrawals {
             let proof = provider
+                // TODO: should this be for the  next block?
                 .get_proof(withdrawal.address, vec![], Some((block_number - 1).into()))
                 .await?;
             state.insert_proof(proof.account_proof);
