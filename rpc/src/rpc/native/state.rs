@@ -101,7 +101,7 @@ async fn generate_state_witness(
                 .author
                 .ok_or_else(|| anyhow!("Block author not found"))?,
             vec![],
-            block.number.map(Into::into),
+            Some((block_number - 1).into()),
         )
         .await?;
     state.insert_proof(proof.account_proof);

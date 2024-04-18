@@ -31,10 +31,7 @@ pub(super) async fn process_transaction(
         byte_code: tx.rlp().to_vec(),
         new_txn_trie_node_byte: tx.rlp().to_vec(),
         new_receipt_trie_node_byte: compute_receipt_bytes(&tx_receipt),
-        gas_used: tx
-            .gas
-            .try_into()
-            .map_err(|_| anyhow!("gas used must be valid u64"))?,
+        gas_used: tx_receipt.gas_used.unwrap().as_u64(),
     };
 
     let mut accounts_state = accounts_state.lock().await;
@@ -139,7 +136,7 @@ fn process_tx_traces(
                     let write_keys: HashMap<H256, U256> = s
                         .iter()
                         //TODO: check if endianess is correct
-                        .map(|(k, v)| (*k, U256::from_big_endian(v.as_bytes())))
+                        .map(|(k, v)| (*k, U256::from_big_endian(&v.0)))
                         .collect();
                     storage_keys.extend(write_keys.keys().copied());
                     write_keys
