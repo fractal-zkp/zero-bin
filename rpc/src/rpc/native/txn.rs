@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use ethers::providers::Middleware;
 use ethers::providers::{Http, Provider};
+use ethers::types::AccountState;
 use ethers::types::{
     Address, DiffMode, GethTrace, GethTraceFrame, PreStateFrame, PreStateMode, TransactionReceipt,
     H160, H256, U256,
@@ -109,66 +110,29 @@ fn process_tx_traces(
         post: post_trace,
     } = diff_trace;
 
-    let mut addresses = HashSet::<H160>::new();
-    addresses.extend(read_trace.0.keys());
-    addresses.extend(post_trace.keys());
-    addresses.extend(pre_trace.keys());
+    let addresses: HashSet<_> = read_trace
+        .0
+        .keys()
+        .chain(post_trace.keys())
+        .chain(pre_trace.keys())
+        .copied()
+        .collect();
 
     Ok(addresses
         .into_iter()
         .map(|address| {
             let storage_keys = accounts_state.entry(address).or_insert(Default::default());
+            let read_state = read_trace.0.get(&address);
+            let pre_state = pre_trace.get(&address);
+            let post_state = post_trace.get(&address);
 
-            let acct_state = read_trace.0.get(&address);
-            let balance = post_trace.get(&address).and_then(|x| x.balance);
-            let nonce = post_trace.get(&address).and_then(|x| x.nonce);
+            let balance = post_state.and_then(|x| x.balance);
+            let nonce = post_state.and_then(|x| x.nonce);
+            let (storage_read, storage_written) =
+                process_storage(storage_keys, read_state, post_state, pre_state);
+            let code_usage = process_code(post_state, read_state, code_db);
+            let self_destructed = process_self_destruct(post_state, pre_state);
 
-            let storage_read = acct_state.and_then(|acct| {
-                acct.storage.as_ref().map(|x| {
-                    let read_keys: Vec<H256> = x.keys().copied().collect();
-                    storage_keys.extend(read_keys.iter().copied());
-                    read_keys
-                })
-            });
-
-            let storage_written = post_trace.get(&address).and_then(|x| {
-                x.storage.as_ref().map(|s| {
-                    let write_keys: HashMap<H256, U256> = s
-                        .iter()
-                        //TODO: check if endianess is correct
-                        .map(|(k, v)| (*k, U256::from_big_endian(&v.0)))
-                        .collect();
-                    storage_keys.extend(write_keys.keys().copied());
-                    write_keys
-                })
-            });
-
-            let code_usage = post_trace
-                .get(&address)
-                .and_then(|x| x.code.as_ref())
-                .map_or(
-                    acct_state.and_then(|acct| {
-                        acct.code.as_ref().map(|x| {
-                            let code = hex::decode(&x[2..]).expect("must be valid");
-                            let code_hash = keccak256(&code).into();
-                            code_db.insert(code_hash, code);
-                            ContractCodeUsage::Read(code_hash)
-                        })
-                    }),
-                    |x| {
-                        let code = hex::decode(&x[2..]).expect("must be valid");
-                        let code_hash = keccak256(&code).into();
-                        code_db.insert(code_hash, code.clone());
-                        Some(ContractCodeUsage::Write(code.into()))
-                    },
-                );
-
-            let self_destructed =
-                if post_trace.get(&address).is_none() && pre_trace.contains_key(&address) {
-                    Some(true)
-                } else {
-                    None
-                };
             (
                 address,
                 TxnTrace {
@@ -182,4 +146,90 @@ fn process_tx_traces(
             )
         })
         .collect::<HashMap<H160, TxnTrace>>())
+}
+
+/// Processes the storage for the given account state.
+///
+/// Returns the storage read and written for the given account in the
+/// transaction and updates the storage keys.
+fn process_storage(
+    storage_keys: &mut HashSet<H256>,
+    acct_state: Option<&AccountState>,
+    post_acct: Option<&AccountState>,
+    pre_acct: Option<&AccountState>,
+) -> (Option<Vec<H256>>, Option<HashMap<H256, U256>>) {
+    let storage_read = acct_state.and_then(|acct| {
+        acct.storage.as_ref().map(|x| {
+            let read_keys: Vec<H256> = x.keys().copied().collect();
+            storage_keys.extend(read_keys.iter().copied());
+            read_keys
+        })
+    });
+
+    let mut storage_written: HashMap<H256, U256> = post_acct
+        .and_then(|x| {
+            x.storage.as_ref().map(|s| {
+                s.iter()
+                    .map(|(k, v)| (*k, U256::from_big_endian(&v.0)))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+
+    // Add the deleted keys to the storage written
+    pre_acct.and_then(|x| {
+        x.storage.as_ref().map(|s| {
+            for key in s.keys() {
+                storage_written.entry(*key).or_insert(U256::zero());
+            }
+        })
+    });
+
+    storage_keys.extend(storage_written.keys().copied());
+
+    let storage_written = if storage_written.is_empty() {
+        None
+    } else {
+        Some(storage_written)
+    };
+
+    (storage_read, storage_written)
+}
+
+/// Processes the code usage for the given account state.
+fn process_code(
+    post_state: Option<&AccountState>,
+    read_state: Option<&AccountState>,
+    code_db: &mut HashMap<H256, Vec<u8>>,
+) -> Option<ContractCodeUsage> {
+    let code_usage = post_state.and_then(|x| x.code.as_ref()).map_or(
+        read_state.and_then(|acct| {
+            acct.code.as_ref().map(|x| {
+                let code = hex::decode(&x[2..]).expect("must be valid");
+                let code_hash = keccak256(&code).into();
+                code_db.insert(code_hash, code);
+                ContractCodeUsage::Read(code_hash)
+            })
+        }),
+        |x| {
+            let code = hex::decode(&x[2..]).expect("must be valid");
+            let code_hash = keccak256(&code).into();
+            code_db.insert(code_hash, code.clone());
+            Some(ContractCodeUsage::Write(code.into()))
+        },
+    );
+    code_usage
+}
+
+/// Processes the self destruct for the given account state.
+fn process_self_destruct(
+    post_state: Option<&AccountState>,
+    pre_state: Option<&AccountState>,
+) -> Option<bool> {
+    let self_destructed = if post_state.is_none() && pre_state.is_some() {
+        Some(true)
+    } else {
+        None
+    };
+    self_destructed
 }

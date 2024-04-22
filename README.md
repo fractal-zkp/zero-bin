@@ -82,6 +82,7 @@ Usage: leader [OPTIONS] <COMMAND>
 Commands:
   stdio    Reads input from stdin and writes output to stdout
   jerigon  Reads input from a Jerigon node and writes output to stdout
+  native   Reads input from a native node and writes output to stdout 
   http     Reads input from HTTP and writes output to a directory
   help     Print this message or the help of the given subcommand(s)
 
@@ -223,6 +224,38 @@ Prove a block.
 
 ```bash
 cargo r --release --bin leader -- -r in-memory jerigon -u <RPC_URL> -b 16 > ./output/proof_16.json
+```
+
+### Native
+
+The native command reads proof input from a native node and writes output to stdout.
+
+```
+cargo r --release --bin leader native --help
+
+Reads input from a native node and writes output to stdout
+
+Usage: leader native [OPTIONS] --rpc-url <RPC_URL> --block-number <BLOCK_NUMBER>
+
+Options:
+  -u, --rpc-url <RPC_URL>
+
+  -b, --block-number <BLOCK_NUMBER>
+          The block number for which to generate a proof
+  -c, --checkpoint-block-number <CHECKPOINT_BLOCK_NUMBER>
+          The checkpoint block number [default: 0]
+  -f, --previous-proof <PREVIOUS_PROOF>
+          The previous proof output
+  -o, --proof-output-path <PROOF_OUTPUT_PATH>
+          If provided, write the generated proof to this file instead of stdout
+  -h, --help
+          Print help
+```
+
+Prove a block.
+
+```bash
+cargo r --release --bin leader -- -r in-memory native -u <RPC_URL> -b 16 > ./output/proof_16.json
 ```
 
 ### HTTP

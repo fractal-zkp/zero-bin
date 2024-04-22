@@ -3,8 +3,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use ethers::providers::{Http, Middleware, Provider};
-use ethers::types::{Block, H160, H256};
+use ethers::types::{Block, EIP1186ProofResponse, H160, H256};
 use ethers::utils::keccak256;
+use futures::stream::{self, StreamExt, TryStreamExt};
+use futures::TryFutureExt;
 use mpt_trie::partial_trie::HashedPartialTrie;
 use tokio::sync::Mutex;
 use trace_decoder::trace_protocol::{
@@ -62,26 +64,19 @@ async fn generate_state_witness(
     provider: Arc<Provider<Http>>,
     block_number: ethereum_types::U64,
     block: Block<H256>,
-) -> Result<
-    (
-        PartialTrieBuilder<HashedPartialTrie>,
-        HashMap<H256, PartialTrieBuilder<HashedPartialTrie>>,
-    ),
-    anyhow::Error,
-> {
+) -> Result<(
+    PartialTrieBuilder<HashedPartialTrie>,
+    HashMap<H256, PartialTrieBuilder<HashedPartialTrie>>,
+)> {
     let mut state = PartialTrieBuilder::new(prev_state_root, Default::default());
     let mut storage_proofs =
         HashMap::<HashedStorageAddr, PartialTrieBuilder<HashedPartialTrie>>::new();
 
-    // Process transaction state accesses
-    for (address, keys) in accounts_state.iter() {
-        let proof = provider
-            .get_proof(
-                *address,
-                keys.iter().copied().collect(),
-                Some((block_number - 1).into()),
-            )
-            .await?;
+    let (account_proofs, withdrawals_proofs, author_proof) =
+        fetch_proof_data(accounts_state, provider, block_number, block).await?;
+
+    // Insert account proofs
+    for (address, keys, proof) in account_proofs.into_iter() {
         state.insert_proof(proof.account_proof);
 
         if keys.len() > 0 {
@@ -94,8 +89,60 @@ async fn generate_state_witness(
         }
     }
 
-    // Process author account access
-    let proof = provider
+    // Insert withdrawal proofs
+    for proof in withdrawals_proofs.into_iter() {
+        state.insert_proof(proof.account_proof);
+    }
+
+    // Insert author proof
+    state.insert_proof(author_proof.account_proof);
+
+    Ok((state, storage_proofs))
+}
+
+async fn fetch_proof_data(
+    accounts_state: HashMap<H160, HashSet<H256>>,
+    provider: Arc<Provider<Http>>,
+    block_number: ethereum_types::U64,
+    block: Block<H256>,
+) -> Result<
+    (
+        Vec<(H160, HashSet<H256>, EIP1186ProofResponse)>,
+        Vec<EIP1186ProofResponse>,
+        EIP1186ProofResponse,
+    ),
+    anyhow::Error,
+> {
+    let account_proofs_fut = stream::iter(accounts_state.into_iter()).then(|(address, keys)| {
+        let provider = Arc::clone(&provider);
+        let block_number = block_number;
+        async move {
+            let proof = provider
+                .get_proof(
+                    address,
+                    keys.iter().copied().collect(),
+                    Some((block_number - 1).into()),
+                )
+                .map_err(|e| anyhow!("Failed to get proof for account: {:?}", e))
+                .await?;
+            Ok::<_, anyhow::Error>((address, keys, proof))
+        }
+    });
+
+    let withdrawals_proofs_fut =
+        stream::iter(block.withdrawals.unwrap_or_default()).then(|withdrawal| {
+            let provider = Arc::clone(&provider);
+            let block_number = block_number;
+            async move {
+                let proof = provider
+                    .get_proof(withdrawal.address, vec![], Some((block_number - 1).into()))
+                    .map_err(|e| anyhow!("Failed to get proof for withdrawal: {:?}", e))
+                    .await?;
+                Ok::<_, anyhow::Error>(proof)
+            }
+        });
+
+    let author_proof_fut = provider
         .get_proof(
             block
                 .author
@@ -103,19 +150,11 @@ async fn generate_state_witness(
             vec![],
             Some((block_number - 1).into()),
         )
-        .await?;
-    state.insert_proof(proof.account_proof);
+        .map_err(|e| anyhow!("Failed to get proof for author: {:?}", e));
 
-    // Process withdrawals account access
-    if let Some(withdrawals) = block.withdrawals.as_ref() {
-        for withdrawal in withdrawals {
-            let proof = provider
-                // TODO: should this be for the  next block?
-                .get_proof(withdrawal.address, vec![], Some((block_number - 1).into()))
-                .await?;
-            state.insert_proof(proof.account_proof);
-        }
-    }
-
-    Ok((state, storage_proofs))
+    Ok(futures::try_join!(
+        account_proofs_fut.try_collect::<Vec<_>>(),
+        withdrawals_proofs_fut.try_collect::<Vec<_>>(),
+        author_proof_fut,
+    )?)
 }
