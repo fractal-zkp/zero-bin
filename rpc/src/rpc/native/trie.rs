@@ -51,6 +51,10 @@ fn construct_partial_trie<T: PartialTrie>(hash: H256, nodes: &HashMap<H256, Vec<
         None => return T::new(Node::Hash(hash)),
     };
 
+    decode_node(bytes, nodes)
+}
+
+fn decode_node<T: PartialTrie>(bytes: Vec<Vec<u8>>, nodes: &HashMap<H256, Vec<u8>>) -> T {
     let node = match bytes.len() {
         17 => parse_branch_node(bytes, nodes),
         2 if is_extension_node(&bytes) => parse_extension_node(bytes, nodes),
@@ -80,7 +84,7 @@ fn parse_branch_node<T: PartialTrie>(
         .map(|i| {
             let child = match bytes[i].is_empty() {
                 true => T::default(),
-                false => construct_partial_trie(H256::from_slice(&bytes[i]), nodes),
+                false => parse_child_node(&bytes[i], nodes),
             };
             Arc::new(Box::new(child))
         })
@@ -105,10 +109,7 @@ fn parse_extension_node<T: PartialTrie>(
 
     Node::Extension {
         nibbles: encoded_path,
-        child: Arc::new(Box::new(construct_partial_trie(
-            H256::from_slice(&bytes[1]),
-            nodes,
-        ))),
+        child: Arc::new(Box::new(parse_child_node(&bytes[1], nodes))),
     }
 }
 
@@ -123,5 +124,13 @@ fn parse_leaf_node<T: PartialTrie>(bytes: Vec<Vec<u8>>) -> Node<T> {
     Node::Leaf {
         nibbles: encoded_path,
         value: bytes[1].clone(),
+    }
+}
+
+/// Parses a child node from the given bytes.
+fn parse_child_node<T: PartialTrie>(bytes: &[u8], nodes: &HashMap<H256, Vec<u8>>) -> T {
+    match bytes.len() {
+        x if x < 32 => decode_node(rlp::decode_list::<Vec<u8>>(bytes), nodes),
+        _ => construct_partial_trie(H256::from_slice(bytes), nodes),
     }
 }

@@ -79,7 +79,7 @@ async fn generate_state_witness(
     for (address, keys, proof) in account_proofs.into_iter() {
         state.insert_proof(proof.account_proof);
 
-        if keys.len() > 0 {
+        if keys.len() > 0 && proof.storage_hash != H256::zero() {
             let mut storage_mpt = PartialTrieBuilder::new(proof.storage_hash, Default::default());
             for proof in proof.storage_proof {
                 storage_mpt.insert_proof(proof.proof);

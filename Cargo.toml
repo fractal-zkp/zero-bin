@@ -21,10 +21,10 @@ keccak-hash = "0.10.0"
 
 # zk-evm dependencies
 plonky2 = "0.2.2"
-evm_arithmetization = { path = "../zk_evm/evm_arithmetization" }
-mpt_trie = { path = "../zk_evm/mpt_trie" }
-trace_decoder = { path = "../zk_evm/trace_decoder" }
-proof_gen = { path = "../zk_evm/proof_gen" }
+evm_arithmetization = { git = "https://github.com/fractal-zkp/zk_evm.git", branch = "trace-processing" }
+mpt_trie = { git = "https://github.com/fractal-zkp/zk_evm.git", branch = "trace-processing" }
+trace_decoder = { git = "https://github.com/fractal-zkp/zk_evm.git", branch = "trace-processing" }
+proof_gen = { git = "https://github.com/fractal-zkp/zk_evm.git", branch = "trace-processing" }
 
 [workspace.package]
 edition = "2021"
