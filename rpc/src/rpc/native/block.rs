@@ -9,6 +9,7 @@ use futures::stream::{self, TryStreamExt};
 use tokio::sync::Mutex;
 use trace_decoder::trace_protocol::{BlockTrace, TxnInfo};
 
+/// Processes the block with the given block number and returns the block trace.
 pub async fn process_block_trace(
     provider: Arc<Provider<Http>>,
     block_number: u64,
@@ -18,8 +19,23 @@ pub async fn process_block_trace(
         .await?
         .ok_or_else(|| anyhow!("Block not found. Block number: {}", block_number))?;
 
-    let accounts_state = Arc::new(Mutex::new(HashMap::<H160, HashSet<H256>>::new()));
+    let mut accounts_state = HashMap::<H160, HashSet<H256>>::new();
+
+    block.withdrawals.as_ref().map(|w| {
+        w.iter().for_each(|w| {
+            accounts_state.insert(w.address, Default::default());
+        })
+    });
+    accounts_state.insert(
+        block
+            .author
+            .ok_or_else(|| anyhow!("Block author not found"))?,
+        Default::default(),
+    );
+
+    let accounts_state = Arc::new(Mutex::new(accounts_state));
     let code_db = Arc::new(Mutex::new(HashMap::<H256, Vec<u8>>::new()));
+
     let tx_infos = stream::iter(&block.transactions)
         .then(|tx_hash| {
             let accounts_state = accounts_state.clone();

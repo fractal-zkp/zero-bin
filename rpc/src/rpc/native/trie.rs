@@ -11,6 +11,12 @@ use mpt_trie::{
     partial_trie::{Node, PartialTrie, WrappedNode},
 };
 
+/// The hash of an empty trie.
+pub const EMPTY_TRIE_HASH: H256 = H256([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+]);
+
 /// A builder for constructing a partial trie from a collection of nodes.
 pub struct PartialTrieBuilder<T> {
     root: H256,
@@ -38,9 +44,35 @@ impl<T: PartialTrie> PartialTrieBuilder<T> {
         }
     }
 
+    /// Inserts variants of extension and leaf nodes into the builder.
+    pub fn insert_if_empty_short_node_variants_from_proof(&mut self, proof: Vec<Bytes>) {
+        for node in proof {
+            let bytes = rlp::decode_list::<Vec<u8>>(&node);
+            match bytes.len() {
+                2 => self.insert_short_node_variants(bytes),
+                _ => continue,
+            }
+        }
+    }
+
     /// Builds the partial trie from the nodes and root.
     pub fn build(self) -> T {
         construct_partial_trie(self.root, &self.nodes)
+    }
+
+    fn insert_short_node_variants(&mut self, bytes: Vec<Vec<u8>>) {
+        let is_leaf = is_leaf_node(&bytes);
+        let mut nibbles = Nibbles::from_bytes_be(&bytes[0][..]).unwrap();
+        while !nibbles.is_empty() {
+            nibbles.pop_next_nibble_front();
+            let node = rlp::encode_list::<Vec<u8>, _>(&[
+                nibbles.to_hex_prefix_encoding(is_leaf).to_vec(),
+                bytes[1].clone(),
+            ]);
+            self.nodes
+                .entry(keccak256(&node).into())
+                .or_insert(node.to_vec());
+        }
     }
 }
 
@@ -48,6 +80,7 @@ impl<T: PartialTrie> PartialTrieBuilder<T> {
 fn construct_partial_trie<T: PartialTrie>(hash: H256, nodes: &HashMap<H256, Vec<u8>>) -> T {
     let bytes = match nodes.get(&hash) {
         Some(value) => rlp::decode_list::<Vec<u8>>(value),
+        None if [H256::zero(), EMPTY_TRIE_HASH].contains(&hash) => return T::default(),
         None => return T::new(Node::Hash(hash)),
     };
 
@@ -103,8 +136,8 @@ fn parse_extension_node<T: PartialTrie>(
 ) -> Node<T> {
     let mut encoded_path = Nibbles::from_bytes_be(&bytes[0][..]).unwrap();
 
-    if encoded_path.pop_nibbles_front(1).get_nibble(0) == 0 {
-        encoded_path.pop_nibbles_front(1);
+    if encoded_path.pop_next_nibble_front() == 0 {
+        encoded_path.pop_next_nibble_front();
     }
 
     Node::Extension {
@@ -117,8 +150,8 @@ fn parse_extension_node<T: PartialTrie>(
 fn parse_leaf_node<T: PartialTrie>(bytes: Vec<Vec<u8>>) -> Node<T> {
     let mut encoded_path = Nibbles::from_bytes_be(&bytes[0][..]).unwrap();
 
-    if encoded_path.pop_nibbles_front(1).get_nibble(0) == 2 {
-        encoded_path.pop_nibbles_front(1);
+    if encoded_path.pop_next_nibble_front() == 2 {
+        encoded_path.pop_next_nibble_front();
     }
 
     Node::Leaf {

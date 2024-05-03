@@ -173,7 +173,7 @@ impl From<Withdrawal> for (Address, U256) {
 
 /// The response from the `eth_getBlockByNumber` RPC method.
 #[derive(Deserialize, Debug)]
-struct EthGetBlockByNumberResponse {
+pub(crate) struct EthGetBlockByNumberResponse {
     result: EthGetBlockByNumberResult,
 }
 
@@ -260,7 +260,7 @@ impl EthGetBlockByNumberResponse {
 
 /// The response from the `eth_chainId` RPC method.
 #[derive(Deserialize, Debug)]
-struct EthChainIdResponse {
+pub(crate) struct EthChainIdResponse {
     result: U256,
 }
 
@@ -293,8 +293,8 @@ impl EthChainIdResponse {
 ///
 /// Contains the necessary data to construct the `OtherBlockData` struct.
 pub(crate) struct RpcBlockMetadata {
-    block_by_number: EthGetBlockByNumberResponse,
-    chain_id: EthChainIdResponse,
+    pub(crate) block_by_number: EthGetBlockByNumberResponse,
+    pub(crate) chain_id: EthChainIdResponse,
     prev_hashes: Vec<H256>,
     checkpoint_state_trie_root: H256,
 }

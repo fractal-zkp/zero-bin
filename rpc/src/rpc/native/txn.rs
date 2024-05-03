@@ -6,8 +6,8 @@ use ethers::providers::Middleware;
 use ethers::providers::{Http, Provider};
 use ethers::types::AccountState;
 use ethers::types::{
-    Address, DiffMode, GethTrace, GethTraceFrame, PreStateFrame, PreStateMode, TransactionReceipt,
-    H160, H256, U256,
+    transaction::eip2930::AccessList, Address, DiffMode, GethTrace, GethTraceFrame, PreStateFrame,
+    PreStateMode, TransactionReceipt, H160, H256, U256,
 };
 use ethers::utils::keccak256;
 use ethers::utils::rlp;
@@ -35,13 +35,14 @@ pub(super) async fn process_transaction(
         gas_used: tx_receipt.gas_used.unwrap().as_u64(),
     };
 
+    let access_list = parse_access_list(tx.access_list.unwrap_or_default());
     let mut accounts_state = accounts_state.lock().await;
     let mut code_db = code_db.lock().await;
     let tx_traces = match (pre_trace, diff_trace) {
         (
             GethTrace::Known(GethTraceFrame::PreStateTracer(PreStateFrame::Default(read))),
             GethTrace::Known(GethTraceFrame::PreStateTracer(PreStateFrame::Diff(diff))),
-        ) => process_tx_traces(&mut accounts_state, &mut code_db, read, diff)?,
+        ) => process_tx_traces(&mut accounts_state, &mut code_db, access_list, read, diff)?,
         _ => unreachable!(),
     };
 
@@ -98,10 +99,25 @@ fn compute_receipt_bytes(tx_receipt: &TransactionReceipt) -> Vec<u8> {
     rlp::encode(&bytes).to_vec()
 }
 
+/// Parse the access list data into a hashmap.
+fn parse_access_list(access_list: AccessList) -> HashMap<H160, HashSet<H256>> {
+    let mut result = HashMap::new();
+
+    for item in access_list.0.into_iter() {
+        result
+            .entry(item.address)
+            .or_insert_with(HashSet::new)
+            .extend(item.storage_keys);
+    }
+
+    result
+}
+
 /// Processes the transaction traces and updates the accounts state.
 fn process_tx_traces(
     accounts_state: &mut HashMap<H160, HashSet<H256>>,
     code_db: &mut HashMap<H256, Vec<u8>>,
+    mut access_list: HashMap<H160, HashSet<H256>>,
     read_trace: PreStateMode,
     diff_trace: DiffMode,
 ) -> Result<HashMap<Address, TxnTrace>> {
@@ -115,6 +131,7 @@ fn process_tx_traces(
         .keys()
         .chain(post_trace.keys())
         .chain(pre_trace.keys())
+        .chain(access_list.keys())
         .copied()
         .collect();
 
@@ -127,10 +144,21 @@ fn process_tx_traces(
             let post_state = post_trace.get(&address);
 
             let balance = post_state.and_then(|x| x.balance);
-            let nonce = post_state.and_then(|x| x.nonce);
-            let (storage_read, storage_written) =
-                process_storage(storage_keys, read_state, post_state, pre_state);
+            let (storage_read, storage_written) = process_storage(
+                storage_keys,
+                access_list.remove(&address).unwrap_or_default(),
+                read_state,
+                post_state,
+                pre_state,
+            );
             let code_usage = process_code(post_state, read_state, code_db);
+            let nonce = post_state.and_then(|x| x.nonce).or_else(|| {
+                if let Some(ContractCodeUsage::Write(_)) = code_usage.as_ref() {
+                    Some(U256::from(1))
+                } else {
+                    None
+                }
+            });
             let self_destructed = process_self_destruct(post_state, pre_state);
 
             (
@@ -154,17 +182,21 @@ fn process_tx_traces(
 /// transaction and updates the storage keys.
 fn process_storage(
     storage_keys: &mut HashSet<H256>,
+    access_list: HashSet<H256>,
     acct_state: Option<&AccountState>,
     post_acct: Option<&AccountState>,
     pre_acct: Option<&AccountState>,
 ) -> (Option<Vec<H256>>, Option<HashMap<H256, U256>>) {
-    let storage_read = acct_state.and_then(|acct| {
-        acct.storage.as_ref().map(|x| {
-            let read_keys: Vec<H256> = x.keys().copied().collect();
-            storage_keys.extend(read_keys.iter().copied());
-            read_keys
-        })
-    });
+    let mut storage_read = access_list;
+    storage_read.extend(
+        acct_state
+            .and_then(|acct| {
+                acct.storage
+                    .as_ref()
+                    .map(|x| x.keys().copied().collect::<Vec<H256>>())
+            })
+            .unwrap_or_default(),
+    );
 
     let mut storage_written: HashMap<H256, U256> = post_acct
         .and_then(|x| {
@@ -186,14 +218,12 @@ fn process_storage(
     });
 
     storage_keys.extend(storage_written.keys().copied());
+    storage_keys.extend(storage_read.iter().copied());
 
-    let storage_written = if storage_written.is_empty() {
-        None
-    } else {
-        Some(storage_written)
-    };
-
-    (storage_read, storage_written)
+    (
+        Option::from(storage_read.into_iter().collect::<Vec<H256>>()).filter(|v| !v.is_empty()),
+        Option::from(storage_written).filter(|v| !v.is_empty()),
+    )
 }
 
 /// Processes the code usage for the given account state.

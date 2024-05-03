@@ -42,7 +42,6 @@ pub(super) async fn process_state_witness(
         accounts_state,
         provider,
         block_number,
-        block,
     )
     .await?;
 
@@ -63,7 +62,6 @@ async fn generate_state_witness(
     accounts_state: HashMap<H160, HashSet<H256>>,
     provider: Arc<Provider<Http>>,
     block_number: ethereum_types::U64,
-    block: Block<H256>,
 ) -> Result<(
     PartialTrieBuilder<HashedPartialTrie>,
     HashMap<H256, PartialTrieBuilder<HashedPartialTrie>>,
@@ -72,30 +70,35 @@ async fn generate_state_witness(
     let mut storage_proofs =
         HashMap::<HashedStorageAddr, PartialTrieBuilder<HashedPartialTrie>>::new();
 
-    let (account_proofs, withdrawals_proofs, author_proof) =
-        fetch_proof_data(accounts_state, provider, block_number, block).await?;
+    let (account_proofs, next_account_proofs) =
+        fetch_proof_data(accounts_state, provider, block_number).await?;
 
     // Insert account proofs
-    for (address, keys, proof) in account_proofs.into_iter() {
+    for (address, _, proof) in account_proofs.into_iter() {
         state.insert_proof(proof.account_proof);
 
-        if keys.len() > 0 && proof.storage_hash != H256::zero() {
-            let mut storage_mpt = PartialTrieBuilder::new(proof.storage_hash, Default::default());
-            for proof in proof.storage_proof {
-                storage_mpt.insert_proof(proof.proof);
-            }
-
-            storage_proofs.insert(keccak256(address).into(), storage_mpt);
+        let storage_mpt =
+            storage_proofs
+                .entry(keccak256(address).into())
+                .or_insert(PartialTrieBuilder::new(
+                    proof.storage_hash,
+                    Default::default(),
+                ));
+        for proof in proof.storage_proof {
+            storage_mpt.insert_proof(proof.proof);
         }
     }
 
-    // Insert withdrawal proofs
-    for proof in withdrawals_proofs.into_iter() {
-        state.insert_proof(proof.account_proof);
-    }
+    // Insert short node variants from next proofs
+    for (address, _, proof) in next_account_proofs.into_iter() {
+        state.insert_if_empty_short_node_variants_from_proof(proof.account_proof);
 
-    // Insert author proof
-    state.insert_proof(author_proof.account_proof);
+        if let Some(storage_mpt) = storage_proofs.get_mut(&keccak256(address).into()) {
+            for proof in proof.storage_proof {
+                storage_mpt.insert_if_empty_short_node_variants_from_proof(proof.proof);
+            }
+        }
+    }
 
     Ok((state, storage_proofs))
 }
@@ -104,57 +107,51 @@ async fn fetch_proof_data(
     accounts_state: HashMap<H160, HashSet<H256>>,
     provider: Arc<Provider<Http>>,
     block_number: ethereum_types::U64,
-    block: Block<H256>,
 ) -> Result<
     (
         Vec<(H160, HashSet<H256>, EIP1186ProofResponse)>,
-        Vec<EIP1186ProofResponse>,
-        EIP1186ProofResponse,
+        Vec<(H160, HashSet<H256>, EIP1186ProofResponse)>,
     ),
     anyhow::Error,
 > {
-    let account_proofs_fut = stream::iter(accounts_state.into_iter()).then(|(address, keys)| {
-        let provider = Arc::clone(&provider);
-        let block_number = block_number;
-        async move {
-            let proof = provider
-                .get_proof(
-                    address,
-                    keys.iter().copied().collect(),
-                    Some((block_number - 1).into()),
-                )
-                .map_err(|e| anyhow!("Failed to get proof for account: {:?}", e))
-                .await?;
-            Ok::<_, anyhow::Error>((address, keys, proof))
-        }
-    });
-
-    let withdrawals_proofs_fut =
-        stream::iter(block.withdrawals.unwrap_or_default()).then(|withdrawal| {
+    let account_proofs_fut = {
+        let accounts_state = accounts_state.clone();
+        stream::iter(accounts_state.into_iter()).then(|(address, keys)| {
             let provider = Arc::clone(&provider);
             let block_number = block_number;
             async move {
                 let proof = provider
-                    .get_proof(withdrawal.address, vec![], Some((block_number - 1).into()))
-                    .map_err(|e| anyhow!("Failed to get proof for withdrawal: {:?}", e))
+                    .get_proof(
+                        address,
+                        keys.iter().copied().collect(),
+                        Some((block_number - 1).into()),
+                    )
+                    .map_err(|e| anyhow!("Failed to get proof for account: {:?}", e))
                     .await?;
-                Ok::<_, anyhow::Error>(proof)
+                Ok::<_, anyhow::Error>((address, keys, proof))
+            }
+        })
+    };
+
+    let next_account_proofs_fut =
+        stream::iter(accounts_state.into_iter()).then(|(address, keys)| {
+            let provider = Arc::clone(&provider);
+            let block_number = block_number;
+            async move {
+                let proof = provider
+                    .get_proof(
+                        address,
+                        keys.iter().copied().collect(),
+                        Some((block_number).into()),
+                    )
+                    .map_err(|e| anyhow!("Failed to get proof for account: {:?}", e))
+                    .await?;
+                Ok::<_, anyhow::Error>((address, keys, proof))
             }
         });
 
-    let author_proof_fut = provider
-        .get_proof(
-            block
-                .author
-                .ok_or_else(|| anyhow!("Block author not found"))?,
-            vec![],
-            Some((block_number - 1).into()),
-        )
-        .map_err(|e| anyhow!("Failed to get proof for author: {:?}", e));
-
     Ok(futures::try_join!(
         account_proofs_fut.try_collect::<Vec<_>>(),
-        withdrawals_proofs_fut.try_collect::<Vec<_>>(),
-        author_proof_fut,
+        next_account_proofs_fut.try_collect::<Vec<_>>()
     )?)
 }

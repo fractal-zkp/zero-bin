@@ -3,7 +3,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use ethers::prelude::*;
 use ethers::types::GethDebugTracerType;
+use futures::try_join;
 use reqwest::ClientBuilder;
+use tracing::debug;
 
 use super::{async_trait, jerigon::RpcBlockMetadata, ProverInput, RpcClient};
 
@@ -36,17 +38,23 @@ impl RpcClient for NativeRpcClient {
         block_number: u64,
         checkpoint_block_number: u64,
     ) -> Result<ProverInput> {
-        Ok(ProverInput {
-            block_trace: block::process_block_trace(Arc::clone(&self.provider), block_number)
-                .await?,
-            other_data: RpcBlockMetadata::fetch(
+        let (block_trace, rpc_block_metadata) = try_join!(
+            block::process_block_trace(Arc::clone(&self.provider), block_number),
+            RpcBlockMetadata::fetch(
                 Arc::new(ClientBuilder::new().http1_only().build()?),
                 &self.rpc_url,
                 block_number,
                 checkpoint_block_number,
             )
-            .await?
-            .into(),
+        )?;
+
+        debug!("Got block result: {:?}", rpc_block_metadata.block_by_number);
+        debug!("Got trace result: {:?}", block_trace);
+        debug!("Got chain_id: {:?}", rpc_block_metadata.chain_id);
+
+        Ok(ProverInput {
+            block_trace,
+            other_data: rpc_block_metadata.into(),
         })
     }
 }
