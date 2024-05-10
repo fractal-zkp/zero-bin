@@ -22,6 +22,9 @@ A composition of [`paladin`](https://github.com/0xPolygonZero/paladin) and [`plo
   - [RPC Usage](#rpc-usage)
   - [Docker](#docker)
   - [Development Branches](#development-branches)
+  - [Testing Blocks](#testing-blocks)
+    - [Proving Blocks](#proving-blocks)
+    - [Generating Witnesses Only](#generating-witnesses-only)
   - [License](#license)
     - [Contribution](#contribution)
 
@@ -218,6 +221,8 @@ Options:
           If provided, write the generated proof to this file instead of stdout
   -h, --help
           Print help
+  -s, --save-inputs-on-error
+          If provided, save the public inputs to disk on error
 ```
 
 Prove a block.

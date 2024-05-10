@@ -17,12 +17,15 @@ pub(crate) async fn rpc_main<T: RpcClient>(
     checkpoint_block_number: u64,
     previous: Option<PlonkyProofIntern>,
     proof_output_path_opt: Option<PathBuf>,
+    save_inputs_on_error: bool,
 ) -> Result<()> {
     let prover_input = client
         .fetch_prover_input(block_number, checkpoint_block_number)
         .await?;
 
-    let proof = prover_input.prove(&runtime, previous).await;
+    let proof = prover_input
+        .prove(&runtime, previous, save_inputs_on_error)
+        .await;
     runtime.close().await?;
 
     let proof = serde_json::to_vec(&proof?.intern)?;
