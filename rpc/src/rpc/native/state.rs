@@ -10,8 +10,8 @@ use futures::TryFutureExt;
 use mpt_trie::partial_trie::HashedPartialTrie;
 use tokio::sync::Mutex;
 use trace_decoder::trace_protocol::{
-    BlockTraceTriePreImages, SeparateStorageTriesPreImage, SeparateTriePreImage,
-    SeparateTriePreImages, TrieDirect,
+    MptBlockTraceTriePreImages, MptSeparateStorageTriesPreImage, MptSeparateTriePreImage,
+    MptSeparateTriePreImages, MptTrieDirect,
 };
 use trace_decoder::types::HashedStorageAddr;
 
@@ -22,7 +22,7 @@ pub(super) async fn process_state_witness(
     provider: Arc<Provider<Http>>,
     block: Block<H256>,
     accounts_state: Arc<Mutex<HashMap<H160, HashSet<H256>>>>,
-) -> Result<BlockTraceTriePreImages> {
+) -> Result<MptBlockTraceTriePreImages> {
     let accounts_state = Arc::try_unwrap(accounts_state)
         .map_err(|e| anyhow!("Failed to unwrap accounts state from arc: {e:?}"))?
         .into_inner();
@@ -45,15 +45,17 @@ pub(super) async fn process_state_witness(
     )
     .await?;
 
-    Ok(BlockTraceTriePreImages::Separate(SeparateTriePreImages {
-        state: SeparateTriePreImage::Direct(TrieDirect(state.build())),
-        storage: SeparateStorageTriesPreImage::MultipleTries(
-            storage_proofs
-                .into_iter()
-                .map(|(a, m)| (a, SeparateTriePreImage::Direct(TrieDirect(m.build()))))
-                .collect(),
-        ),
-    }))
+    Ok(MptBlockTraceTriePreImages::Separate(
+        MptSeparateTriePreImages {
+            state: MptSeparateTriePreImage::Direct(MptTrieDirect(state.build())),
+            storage: MptSeparateStorageTriesPreImage::MultipleTries(
+                storage_proofs
+                    .into_iter()
+                    .map(|(a, m)| (a, MptSeparateTriePreImage::Direct(MptTrieDirect(m.build()))))
+                    .collect(),
+            ),
+        },
+    ))
 }
 
 /// Generates the state witness for the given block.

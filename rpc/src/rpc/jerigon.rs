@@ -11,7 +11,9 @@ use serde::Deserialize;
 use thiserror::Error;
 use tokio::try_join;
 use trace_decoder::{
-    trace_protocol::{BlockTrace, BlockTraceTriePreImages, TxnInfo},
+    trace_protocol::{
+        AtomicUnitInfo, BlockTrace, MptBlockTraceTriePreImages, TriePreImage, TxnInfo,
+    },
     types::{BlockLevelData, OtherBlockData},
 };
 use tracing::{debug, info};
@@ -65,7 +67,7 @@ impl RpcClient for JerigonRpcClient {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum JerigonResultItem {
     Result(TxnInfo),
-    BlockWitness(BlockTraceTriePreImages),
+    BlockWitness(MptBlockTraceTriePreImages),
 }
 
 /// The response from the `debug_traceBlockByNumber` RPC method.
@@ -102,9 +104,9 @@ impl TryFrom<JerigonTraceResponse> for BlockTrace {
             trie_pre_images.ok_or(JerigonTraceError::BlockTraceTriePreImagesNotFound)?;
 
         Ok(Self {
-            txn_info,
+            atomic_info: AtomicUnitInfo::Txn(txn_info),
             code_db: None,
-            trie_pre_images,
+            trie_pre_images: TriePreImage::Mpt(trie_pre_images),
         })
     }
 }

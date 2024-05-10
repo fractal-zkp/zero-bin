@@ -10,7 +10,7 @@ use paladin::{
 use proof_gen::{proof_types::GeneratedBlockProof, types::PlonkyProofIntern};
 use serde::{Deserialize, Serialize};
 use trace_decoder::{
-    processed_block_trace::ProcessingMeta,
+    processed_block_trace_mpt::ProcessingMeta,
     trace_protocol::BlockTrace,
     types::{CodeHash, OtherBlockData},
 };
@@ -41,7 +41,7 @@ impl ProverInput {
         info!("Proving block {block_number}");
 
         let other_data = self.other_data;
-        let txs = self.block_trace.into_txn_proof_gen_ir(
+        let txs = self.block_trace.into_proof_gen_mpt_ir(
             &ProcessingMeta::new(resolve_code_hash_fn),
             other_data.clone(),
         )?;
@@ -88,7 +88,7 @@ impl ProverInput {
         info!("Testing witness generation for block {block_number}.");
 
         let other_data = self.other_data;
-        let txs = self.block_trace.into_txn_proof_gen_ir(
+        let txs = self.block_trace.into_proof_gen_mpt_ir(
             &ProcessingMeta::new(resolve_code_hash_fn),
             other_data.clone(),
         )?;

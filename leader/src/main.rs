@@ -106,6 +106,7 @@ async fn main() -> Result<()> {
                 checkpoint_block_number,
                 previous_proof,
                 proof_output_path,
+                save_inputs_on_error,
             )
             .await?;
         }
@@ -115,6 +116,7 @@ async fn main() -> Result<()> {
             checkpoint_block_number,
             previous_proof,
             proof_output_path,
+            save_inputs_on_error,
         } => {
             let previous_proof = get_previous_proof(previous_proof)?;
             let client =

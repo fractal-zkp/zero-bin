@@ -7,7 +7,7 @@ use ethers::providers::{Http, Provider};
 use ethers::types::{H160, H256};
 use futures::stream::{self, TryStreamExt};
 use tokio::sync::Mutex;
-use trace_decoder::trace_protocol::{BlockTrace, TxnInfo};
+use trace_decoder::trace_protocol::{AtomicUnitInfo, BlockTrace, TriePreImage, TxnInfo};
 
 /// Processes the block with the given block number and returns the block trace.
 pub async fn process_block_trace(
@@ -52,12 +52,12 @@ pub async fn process_block_trace(
         super::state::process_state_witness(Arc::clone(&provider), block, accounts_state).await?;
 
     Ok(BlockTrace {
-        txn_info: tx_infos,
+        atomic_info: AtomicUnitInfo::Txn(tx_infos),
         code_db: Some(
             Arc::try_unwrap(code_db)
                 .map_err(|_| anyhow!("Lock still has multiple owners"))?
                 .into_inner(),
         ),
-        trie_pre_images: trie_pre_images,
+        trie_pre_images: TriePreImage::Mpt(trie_pre_images),
     })
 }
