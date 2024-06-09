@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use alloy::{
     primitives::{keccak256, Address, StorageKey, B256},
@@ -15,11 +14,11 @@ use trace_decoder::trace_protocol::{
     SeparateTriePreImages, TrieDirect, TxnInfo,
 };
 
-use crate::compat::{ToAlloy, ToPrimitive};
+use crate::compat::Compat;
 
 /// Processes the state witness for the given block.
 pub async fn process_state_witness<ProviderT, TransportT>(
-    provider: Arc<ProviderT>,
+    provider: &ProviderT,
     block: Block,
     txn_infos: &[TxnInfo],
 ) -> anyhow::Result<BlockTraceTriePreImages>
@@ -50,7 +49,7 @@ where
                 .into_iter()
                 .map(|(a, m)| {
                     (
-                        a.to_primitive(),
+                        a.compat(),
                         SeparateTriePreImage::Direct(TrieDirect(m.build())),
                     )
                 })
@@ -79,14 +78,14 @@ pub fn process_states_access(
 
     for txn_info in tx_infos {
         for (address, trace) in txn_info.traces.iter() {
-            let address_storage_access = state_access.entry((*address).to_alloy()).or_default();
+            let address_storage_access = state_access.entry((*address).compat()).or_default();
 
             if let Some(read_keys) = trace.storage_read.as_ref() {
-                address_storage_access.extend(read_keys.iter().copied().map(ToAlloy::to_alloy));
+                address_storage_access.extend(read_keys.iter().copied().map(Compat::compat));
             }
 
             if let Some(written_keys) = trace.storage_written.as_ref() {
-                address_storage_access.extend(written_keys.keys().copied().map(ToAlloy::to_alloy));
+                address_storage_access.extend(written_keys.keys().copied().map(Compat::compat));
             }
         }
     }
@@ -98,7 +97,7 @@ pub fn process_states_access(
 async fn generate_state_witness<ProviderT, TransportT>(
     prev_state_root: B256,
     accounts_state: HashMap<Address, HashSet<StorageKey>>,
-    provider: Arc<ProviderT>,
+    provider: &ProviderT,
     block_number: u64,
 ) -> anyhow::Result<(
     PartialTrieBuilder<HashedPartialTrie>,
@@ -108,7 +107,7 @@ where
     ProviderT: Provider<TransportT>,
     TransportT: Transport + Clone,
 {
-    let mut state = PartialTrieBuilder::new(prev_state_root.to_primitive(), Default::default());
+    let mut state = PartialTrieBuilder::new(prev_state_root.compat(), Default::default());
     let mut storage_proofs = HashMap::<B256, PartialTrieBuilder<HashedPartialTrie>>::new();
 
     let (account_proofs, next_account_proofs) =
@@ -116,27 +115,27 @@ where
 
     // Insert account proofs
     for (address, proof) in account_proofs.into_iter() {
-        state.insert_proof(proof.account_proof.to_primitive());
+        state.insert_proof(proof.account_proof.compat());
 
         let storage_mpt =
             storage_proofs
                 .entry(keccak256(address))
                 .or_insert(PartialTrieBuilder::new(
-                    proof.storage_hash.to_primitive(),
+                    proof.storage_hash.compat(),
                     Default::default(),
                 ));
         for proof in proof.storage_proof {
-            storage_mpt.insert_proof(proof.proof.to_primitive());
+            storage_mpt.insert_proof(proof.proof.compat());
         }
     }
 
     // Insert short node variants from next proofs
     for (address, proof) in next_account_proofs.into_iter() {
-        state.insert_short_node_variants_from_proof(proof.account_proof.to_primitive());
+        state.insert_short_node_variants_from_proof(proof.account_proof.compat());
 
         if let Some(storage_mpt) = storage_proofs.get_mut(&keccak256(address)) {
             for proof in proof.storage_proof {
-                storage_mpt.insert_short_node_variants_from_proof(proof.proof.to_primitive());
+                storage_mpt.insert_short_node_variants_from_proof(proof.proof.compat());
             }
         }
     }
@@ -147,7 +146,7 @@ where
 /// Fetches the proof data for the given accounts and associated storage keys.
 async fn fetch_proof_data<ProviderT, TransportT>(
     accounts_state: HashMap<Address, HashSet<StorageKey>>,
-    provider: Arc<ProviderT>,
+    provider: &ProviderT,
     block_number: u64,
 ) -> anyhow::Result<(
     Vec<(Address, EIP1186AccountProofResponse)>,
@@ -160,30 +159,26 @@ where
     let account_proofs_fut = accounts_state
         .clone()
         .into_iter()
-        .map(|(address, keys)| {
-            let provider = provider.clone();
-            async move {
-                let proof = provider
-                    .get_proof(address, keys.into_iter().collect())
-                    .block_id((block_number - 1).into())
-                    .await
-                    .context("Failed to get proof for account")?;
-                anyhow::Result::Ok((address, proof))
-            }
+        .map(|(address, keys)| async move {
+            let proof = provider
+                .get_proof(address, keys.into_iter().collect())
+                .block_id((block_number - 1).into())
+                .await
+                .context("Failed to get proof for account")?;
+            anyhow::Result::Ok((address, proof))
         })
         .collect::<Vec<_>>();
 
-    let next_account_proofs_fut = accounts_state.into_iter().map(|(address, keys)| {
-        let provider = provider.clone();
-        async move {
+    let next_account_proofs_fut = accounts_state
+        .into_iter()
+        .map(|(address, keys)| async move {
             let proof = provider
                 .get_proof(address, keys.into_iter().collect())
                 .block_id(block_number.into())
                 .await
                 .context("Failed to get proof for account")?;
             anyhow::Result::Ok((address, proof))
-        }
-    });
+        });
 
     try_join(
         try_join_all(account_proofs_fut),

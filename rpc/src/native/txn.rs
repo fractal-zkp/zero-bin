@@ -1,8 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
+use __compat_primitive_types::{H256, U256};
 use alloy::{
     primitives::{keccak256, Address, B256},
     providers::{
@@ -23,53 +21,42 @@ use alloy::{
 };
 use anyhow::Context as _;
 use futures::stream::{FuturesOrdered, TryStreamExt};
-use primitive_types::{H256, U256};
 use trace_decoder::trace_protocol::{ContractCodeUsage, TxnInfo, TxnMeta, TxnTrace};
 
 use super::CodeDb;
-use crate::compat::ToPrimitive;
+use crate::compat::Compat;
 
 /// Processes the transactions in the given block and updates the code db.
 pub(super) async fn process_transactions<ProviderT, TransportT>(
     block: &Block,
-    provider: Arc<ProviderT>,
+    provider: &ProviderT,
 ) -> anyhow::Result<(CodeDb, Vec<TxnInfo>)>
 where
     ProviderT: Provider<TransportT>,
     TransportT: Transport + Clone,
 {
-    let mut futures_ordered = FuturesOrdered::new();
-
-    for tx in block
+    block
         .transactions
         .as_transactions()
         .context("No transactions in block")?
-    {
-        let provider = provider.clone();
-        futures_ordered
-            .push_back(async move { super::txn::process_transaction(provider, tx).await });
-    }
-
-    let result = futures_ordered
-        .try_collect::<Vec<(CodeDb, TxnInfo)>>()
-        .await?
-        .into_iter()
-        .fold(
+        .iter()
+        .map(|tx| super::txn::process_transaction(provider, tx))
+        .collect::<FuturesOrdered<_>>()
+        .try_fold(
             (HashMap::new(), Vec::new()),
-            |(mut code_db, mut txn_infos), (tx_code_db, txn_info)| {
+            |(mut code_db, mut txn_infos), (tx_code_db, txn_info)| async move {
                 code_db.extend(tx_code_db);
                 txn_infos.push(txn_info);
-                (code_db, txn_infos)
+                Ok((code_db, txn_infos))
             },
-        );
-
-    Ok(result)
+        )
+        .await
 }
 
 /// Processes the transaction with the given transaction hash and updates the
 /// accounts state.
 async fn process_transaction<ProviderT, TransportT>(
-    provider: Arc<ProviderT>,
+    provider: &ProviderT,
     tx: &Transaction,
 ) -> anyhow::Result<(CodeDb, TxnInfo)>
 where
@@ -101,7 +88,7 @@ where
             meta: tx_meta,
             traces: tx_traces
                 .into_iter()
-                .map(|(k, v)| (k.to_primitive(), v))
+                .map(|(k, v)| (k.compat(), v))
                 .collect(),
         },
     ))
@@ -109,7 +96,7 @@ where
 
 /// Fetches the transaction data for the given transaction hash.
 async fn fetch_tx_data<ProviderT, TransportT>(
-    provider: Arc<ProviderT>,
+    provider: &ProviderT,
     tx_hash: &B256,
 ) -> anyhow::Result<(<Ethereum as Network>::ReceiptResponse, GethTrace, GethTrace), anyhow::Error>
 where
@@ -139,7 +126,7 @@ fn parse_access_list(access_list: Option<&AccessList>) -> HashMap<Address, HashS
             result
                 .entry(item.address)
                 .or_insert_with(HashSet::new)
-                .extend(item.storage_keys.into_iter().map(ToPrimitive::to_primitive));
+                .extend(item.storage_keys.into_iter().map(Compat::compat));
         }
     }
 
@@ -174,7 +161,7 @@ async fn process_tx_traces(
         let pre_state = pre_trace.get(&address);
         let post_state = post_trace.get(&address);
 
-        let balance = post_state.and_then(|x| x.balance.map(ToPrimitive::to_primitive));
+        let balance = post_state.and_then(|x| x.balance.map(Compat::compat));
         let (storage_read, storage_written) = process_storage(
             access_list.remove(&address).unwrap_or_default(),
             read_state,
@@ -223,7 +210,7 @@ fn process_nonce(
 /// Returns the storage read and written for the given account in the
 /// transaction and updates the storage keys.
 fn process_storage(
-    access_list: HashSet<primitive_types::H256>,
+    access_list: HashSet<__compat_primitive_types::H256>,
     acct_state: Option<&AccountState>,
     post_acct: Option<&AccountState>,
     pre_acct: Option<&AccountState>,
@@ -235,7 +222,7 @@ fn process_storage(
                 acct.storage
                     .keys()
                     .copied()
-                    .map(ToPrimitive::to_primitive)
+                    .map(Compat::compat)
                     .collect::<Vec<H256>>()
             })
             .unwrap_or_default(),
@@ -245,7 +232,7 @@ fn process_storage(
         .map(|x| {
             x.storage
                 .iter()
-                .map(|(k, v)| ((*k).to_primitive(), U256::from_big_endian(&v.0)))
+                .map(|(k, v)| ((*k).compat(), U256::from_big_endian(&v.0)))
                 .collect()
         })
         .unwrap_or_default();
@@ -254,7 +241,7 @@ fn process_storage(
     if let Some(pre_acct) = pre_acct {
         for key in pre_acct.storage.keys() {
             storage_written
-                .entry((*key).to_primitive())
+                .entry((*key).compat())
                 .or_insert(U256::zero());
         }
     };
@@ -276,12 +263,12 @@ async fn process_code(
         read_state.and_then(|x| x.code.as_ref()),
     ) {
         (Some(post_code), _) => {
-            let code_hash = keccak256(post_code).to_primitive();
+            let code_hash = keccak256(post_code).compat();
             code_db.insert(code_hash, post_code.to_vec());
             Some(ContractCodeUsage::Write(post_code.to_vec().into()))
         }
         (_, Some(read_code)) => {
-            let code_hash = keccak256(read_code).to_primitive();
+            let code_hash = keccak256(read_code).compat();
             code_db.insert(code_hash, read_code.to_vec());
 
             Some(ContractCodeUsage::Read(code_hash))

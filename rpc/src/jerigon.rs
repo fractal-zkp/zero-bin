@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 use trace_decoder::trace_protocol::{BlockTrace, BlockTraceTriePreImages, TxnInfo};
 
-use super::metadata::fetch_other_block_data;
+use super::fetch_other_block_data;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
