@@ -1,14 +1,7 @@
 use alloy::{
-    primitives::B256,
-    providers::Provider,
-    rpc::types::eth::{BlockId, BlockNumberOrTag, BlockTransactionsKind},
-    transports::Transport,
+    primitives::B256, providers::Provider, rpc::types::eth::BlockId, transports::Transport,
 };
-use anyhow::Context as _;
-use common::block_interval::BlockInterval;
-use futures::StreamExt as _;
 use prover::BlockProverInput;
-use prover::ProverInput;
 use serde::Deserialize;
 use serde_json::json;
 use trace_decoder::trace_protocol::{
@@ -64,37 +57,5 @@ where
             code_db: Default::default(),
         },
         other_data,
-    })
-}
-
-/// Obtain the prover input for a given block interval
-pub async fn prover_input<ProviderT, TransportT>(
-    provider: ProviderT,
-    block_interval: BlockInterval,
-    checkpoint_block_id: BlockId,
-) -> anyhow::Result<ProverInput>
-where
-    ProviderT: Provider<TransportT>,
-    TransportT: Transport + Clone,
-{
-    // Grab interval checkpoint block state trie
-    let checkpoint_state_trie_root = provider
-        .get_block(checkpoint_block_id, BlockTransactionsKind::Hashes)
-        .await?
-        .context("block does not exist")?
-        .header
-        .state_root;
-
-    let mut block_proofs = Vec::new();
-    let mut block_interval = block_interval.into_bounded_stream()?;
-
-    while let Some(block_num) = block_interval.next().await {
-        let block_id = BlockId::Number(BlockNumberOrTag::Number(block_num));
-        let block_prover_input =
-            block_prover_input(&provider, block_id, checkpoint_state_trie_root).await?;
-        block_proofs.push(block_prover_input);
-    }
-    Ok(ProverInput {
-        blocks: block_proofs,
     })
 }
