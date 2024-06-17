@@ -1,13 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use alloy::{
+    primitives::B256,
     providers::Provider,
     rpc::types::eth::{BlockId, BlockTransactionsKind},
     transports::Transport,
 };
 use anyhow::Context as _;
 use futures::try_join;
-use prover::ProverInput;
+use prover::BlockProverInput;
 use trace_decoder::trace_protocol::BlockTrace;
 
 mod state;
@@ -16,21 +17,21 @@ mod txn;
 type CodeDb = HashMap<__compat_primitive_types::H256, Vec<u8>>;
 
 /// Fetches the prover input for the given BlockId.
-pub async fn prover_input<ProviderT, TransportT>(
-    provider: Arc<ProviderT>,
+pub async fn block_prover_input<ProviderT, TransportT>(
+    provider: &ProviderT,
     block_number: BlockId,
-    checkpoint_block_number: BlockId,
-) -> anyhow::Result<ProverInput>
+    checkpoint_state_trie_root: B256,
+) -> anyhow::Result<BlockProverInput>
 where
     ProviderT: Provider<TransportT>,
     TransportT: Transport + Clone,
 {
     let (block_trace, other_data) = try_join!(
         process_block_trace(&provider, block_number),
-        crate::fetch_other_block_data(&provider, block_number, checkpoint_block_number,)
+        crate::fetch_other_block_data(&provider, block_number, checkpoint_state_trie_root,)
     )?;
 
-    Ok(ProverInput {
+    Ok(BlockProverInput {
         block_trace,
         other_data,
     })
