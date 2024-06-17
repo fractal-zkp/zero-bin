@@ -206,21 +206,25 @@ cargo r --release --bin leader jerigon --help
 
 Reads input from a Jerigon node and writes output to stdout
 
-Usage: leader jerigon [OPTIONS] --rpc-url <RPC_URL> --block-number <BLOCK_NUMBER>
+Usage: leader jerigon [OPTIONS] --rpc-url <RPC_URL> --block-interval <BLOCK_INTERVAL>
 
 Options:
   -u, --rpc-url <RPC_URL>
 
-  -b, --block-number <BLOCK_NUMBER>
-          The block number for which to generate a proof
+  -i, --block-interval <BLOCK_INTERVAL>
+          The block interval for which to generate a proof
   -c, --checkpoint-block-number <CHECKPOINT_BLOCK_NUMBER>
           The checkpoint block number [default: 0]
   -f, --previous-proof <PREVIOUS_PROOF>
           The previous proof output
-  -o, --proof-output-path <PROOF_OUTPUT_PATH>
-          If provided, write the generated proof to this file instead of stdout
+  -o, --proof-output-dir <PROOF_OUTPUT_DIR>
+          If provided, write the generated proofs to this directory instead of stdout
   -s, --save-inputs-on-error
           If true, save the public inputs to disk on error
+  -b, --block-time <BLOCK_TIME>
+          Network block time in milliseconds. This value is used to determine the blockchain node polling interval [env: ZERO_BIN_BLOCK_TIME=] [default: 2000]
+  -k, --keep-intermediate-proofs
+          Keep intermediate proofs. Default action is to delete them after the final proof is generated [env: ZERO_BIN_KEEP_INTERMEDIATE_PROOFS=]
       --backoff <BACKOFF>
           Backoff in milliseconds for request retries [default: 0]
       --max-retries <MAX_RETRIES>
@@ -244,21 +248,25 @@ cargo r --release --bin leader native --help
 
 Reads input from a native node and writes output to stdout
 
-Usage: leader native [OPTIONS] --rpc-url <RPC_URL> --block-number <BLOCK_NUMBER>
+Usage: leader native [OPTIONS] --rpc-url <RPC_URL> --block-interval <BLOCK_INTERVAL>
 
 Options:
   -u, --rpc-url <RPC_URL>
 
-  -b, --block-number <BLOCK_NUMBER>
-          The block number for which to generate a proof
+  -i, --block-interval <BLOCK_INTERVAL>
+          The block interval for which to generate a proof
   -c, --checkpoint-block-number <CHECKPOINT_BLOCK_NUMBER>
           The checkpoint block number [default: 0]
   -f, --previous-proof <PREVIOUS_PROOF>
           The previous proof output
-  -o, --proof-output-path <PROOF_OUTPUT_PATH>
-          If provided, write the generated proof to this file instead of stdout
+  -o, --proof-output-dir <PROOF_OUTPUT_DIR>
+          If provided, write the generated proofs to this directory instead of stdout
   -s, --save-inputs-on-error
           If true, save the public inputs to disk on error
+  -b, --block-time <BLOCK_TIME>
+          Network block time in milliseconds. This value is used to determine the blockchain node polling interval [env: ZERO_BIN_BLOCK_TIME=] [default: 2000]
+  -k, --keep-intermediate-proofs
+          Keep intermediate proofs. Default action is to delete them after the final proof is generated [env: ZERO_BIN_KEEP_INTERMEDIATE_PROOFS=]
       --backoff <BACKOFF>
           Backoff in milliseconds for request retries [default: 0]
       --max-retries <MAX_RETRIES>
@@ -386,7 +394,7 @@ Options:
 Example:
 
 ```bash
-cargo r --release --bin rpc fetch --rpc-url <RPC_URL> --block-number 16 > ./output/block-16.json
+cargo r --release --bin rpc fetch --start-block <START_BLOCK> --end-block <END_BLOCK> --rpc-url <RPC_URL> --block-number 16 > ./output/block-16.json
 ```
 
 ## Docker
