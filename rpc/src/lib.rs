@@ -28,7 +28,7 @@ pub enum RpcType {
 
 /// Obtain the prover input for a given block interval
 pub async fn prover_input<ProviderT, TransportT>(
-    provider: ProviderT,
+    provider: &ProviderT,
     block_interval: BlockInterval,
     checkpoint_block_id: BlockId,
     rpc_type: RpcType,

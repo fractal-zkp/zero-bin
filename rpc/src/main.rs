@@ -55,7 +55,7 @@ impl Cli {
 
                 // Retrieve prover input from the Erigon node
                 let prover_input = rpc::prover_input(
-                    build_http_retry_provider(rpc_url, backoff, max_retries),
+                    &build_http_retry_provider(rpc_url, backoff, max_retries),
                     block_interval,
                     checkpoint_block_number,
                     rpc_type,

@@ -35,7 +35,7 @@ pub(crate) async fn client_main(
     mut params: ProofParams,
 ) -> Result<()> {
     let prover_input = rpc::prover_input(
-        build_http_retry_provider(
+        &build_http_retry_provider(
             rpc_params.rpc_url,
             rpc_params.backoff,
             rpc_params.max_retries,
